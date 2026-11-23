@@ -7,12 +7,52 @@
 
 ## Локальный прогон КТ3
 
-Нужен Python 3.10 или новее. Из корня репозитория:
+Нужен Python 3.10 или новее. Зависимости устанавливаются из корня репозитория:
 
 ```powershell
-python -B -X utf8 -m kt3.run --output kt3/results.json
+python -m pip install -r requirements.txt
 ```
 
-Команда трижды запускает baseline и многошаговый режим на 45 видимых вопросах, проверяет шесть сценариев и записывает метрики вместе с трассами. Прогон работает на синтетическом корпусе без внешних сервисов. Проверить согласованность замороженного набора можно командой `python -B -X utf8 eval/validate_eval.py`.
+### Бесплатный локальный прогон
+
+```powershell
+python -B -X utf8 -m kt3.run --output kt3/results_local.json
+```
+
+Команда трижды запускает детерминированный baseline и многошаговую систему на 45 видимых вопросах, проверяет шесть сценариев и записывает метрики вместе с трассами. Прогон работает на синтетическом корпусе без внешних сервисов. Отдельное имя `results_local.json` не позволяет случайно перезаписать итоговый отчёт КТ3.
+
+Согласованность замороженного набора проверяется командой:
+
+```powershell
+python -B -X utf8 eval/validate_eval.py
+```
+
+### Полный прогон с LLM baseline
+
+Ключ OpenAI передаётся только через переменную окружения. Для временной установки ключа в текущем окне PowerShell:
+
+```powershell
+$secureOpenAIKey = Read-Host "OPENAI_API_KEY" -AsSecureString
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new("", $secureOpenAIKey).Password
+Remove-Variable secureOpenAIKey
+```
+
+Полный прогон выполняется командой:
+
+```powershell
+python -B -X utf8 -m kt3.run `
+  --output kt3/results.json `
+  --repeats 3 `
+  --include-llm `
+  --llm-repeats 3
+```
+
+Команда добавляет 135 платных вызовов `gpt-6.2-sol` и перезаписывает итоговый отчёт. После прогона ключ удаляется из текущего окна:
+
+```powershell
+Remove-Item Env:OPENAI_API_KEY
+```
+
+Ключ не записывается в репозиторий или отчёт. Текущий [results.json](kt3/results.json) уже содержит сохранённый полный прогон трёх режимов.
 
 Архитектура и измерения приведены в [дизайн-доке](design-doc.md).
