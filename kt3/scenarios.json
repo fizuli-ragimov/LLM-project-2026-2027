@@ -1,0 +1,69 @@
+[
+  {
+    "id": "release_drives_sql_window",
+    "description": "Дата из найденного релиза задаёт окна запросу SQL.",
+    "turns": [
+      {
+        "question": "Как изменилось общее число обращений в течение 29 дней после релиза 2.0 по сравнению с предыдущими 29 днями?",
+        "expect": {"status": "answer", "order": ["retrieve_documents:ok", "sql:ok"], "answer": {"release_date": "2026-02-15", "before": 206, "after": 891}, "sql_start": "2026-01-17"}
+      }
+    ]
+  },
+  {
+    "id": "sql_calculator_and_release",
+    "description": "Калькулятор получает фактические количества из SQL, затем поиск подбирает релизы периода.",
+    "turns": [
+      {
+        "question": "У какого сегмента была самая высокая частота обращений на 100 активных клиентов в третьем квартале и какие релизы происходили в этот период?",
+        "expect": {"status": "answer", "order": ["sql:ok", "calculate:ok", "retrieve_documents:ok"], "answer": {"top": {"segment": "small_business", "tickets_per_100": 86.19}, "doc_ids": ["release_2_1"]}, "calculator_from_sql": true}
+      }
+    ]
+  },
+  {
+    "id": "middle_timeout_retry",
+    "description": "Первый поиск релиза после успешных SQL и расчёта получает таймаут. Повтор проверяется отдельно.",
+    "turns": [
+      {
+        "question": "У какого сегмента была самая высокая частота обращений на 100 активных клиентов в третьем квартале и какие релизы происходили в этот период?",
+        "fault": {"retrieve_documents": 1},
+        "expect": {"status": "answer", "order": ["sql:ok", "calculate:ok", "retrieve_documents:timeout", "retrieve_documents:ok"], "answer": {"doc_ids": ["release_2_1"]}}
+      }
+    ]
+  },
+  {
+    "id": "budget_exhausted",
+    "description": "Два вызова израсходованы на SQL и расчёт. Система возвращает подтверждённую частоту, поиск не запускается.",
+    "turns": [
+      {
+        "question": "У какого сегмента была самая высокая частота обращений на 100 активных клиентов в третьем квартале и какие релизы происходили в этот период?",
+        "step_limit": 2,
+        "expect": {"status": "partial_answer", "reason": "budget_exhausted", "order": ["sql:ok", "calculate:ok"], "answer": {"top": {"segment": "small_business", "tickets_per_100": 86.19}}, "missing_answer_fields": ["doc_ids"]}
+      }
+    ]
+  },
+  {
+    "id": "user_corrects_month",
+    "description": "Уточнение пользователя меняет сентябрь на август. Выручка пересчитывается с новым окном.",
+    "turns": [
+      {
+        "question": "Какова признанная выручка за сентябрь 2026 года?",
+        "expect": {"status": "answer", "order": ["sql:ok"], "sql_start": "2026-09-01"}
+      },
+      {
+        "question": "Нет, за август",
+        "expect": {"status": "answer", "order": ["sql:ok"], "sql_start": "2026-08-01", "answer": 191963321.25, "user_corrected": true}
+      }
+    ]
+  },
+  {
+    "id": "repeat_timeout_partial",
+    "description": "Обе попытки поиска релиза истекают. Расчёт сохраняется, релизы остаются неизвестными.",
+    "turns": [
+      {
+        "question": "У какого сегмента была самая высокая частота обращений на 100 активных клиентов в третьем квартале и какие релизы происходили в этот период?",
+        "fault": {"retrieve_documents": 2},
+        "expect": {"status": "partial_answer", "reason": "timeout", "order": ["sql:ok", "calculate:ok", "retrieve_documents:timeout", "retrieve_documents:timeout"], "answer": {"top": {"segment": "small_business"}}, "missing_answer_fields": ["doc_ids"]}
+      }
+    ]
+  }
+]
