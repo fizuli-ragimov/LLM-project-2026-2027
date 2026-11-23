@@ -124,6 +124,7 @@ class LLMBaselineRunner:
                 "access_denied",
             )
         else:
+            session.expire(as_of)
             previous_questions = list(session.history)
             normalized, corrected = session.turn(question, as_of)
             payload = {

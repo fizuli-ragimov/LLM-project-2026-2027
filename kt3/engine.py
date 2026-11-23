@@ -70,9 +70,12 @@ class Session:
     updated_at: datetime | None = None
     history: deque = field(default_factory=lambda: deque(maxlen=MAX_HISTORY))
 
-    def turn(self, question: str, at: datetime) -> tuple[str, bool]:
+    def expire(self, at: datetime) -> None:
         if self.updated_at is not None and (at < self.updated_at or at - self.updated_at >= SESSION_TTL):
             self.history.clear()
+
+    def turn(self, question: str, at: datetime) -> tuple[str, bool]:
+        self.expire(at)
         self.updated_at = at
         lowered = question.lower().replace("ё", "е").strip()
         corrected = bool(re.match(r"^(?:а|нет,?|уточнение:)\s+за\s+", lowered))

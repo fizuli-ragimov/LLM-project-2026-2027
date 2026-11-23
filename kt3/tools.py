@@ -129,7 +129,7 @@ def parse_document(path: Path) -> dict:
     _, header, body = path.read_text(encoding="utf-8").split("---", 2)
     metadata = {key.strip(): value.strip().strip('"') for key, value in
                 (line.split(":", 1) for line in header.splitlines() if line.strip())}
-    sections = dict(re.findall(r"^## (.+)\n+(.+?)(?=^## |\Z)", body, flags=re.MULTILINE | re.DOTALL))
+    sections = dict(re.findall(r"^## ([^\n]+)\n+(.+?)(?=^## |\Z)", body, flags=re.MULTILINE | re.DOTALL))
     sections = {section: text.strip() for section, text in sections.items()}
     return {
         "metadata": metadata, "sections": sections, "path": path.relative_to(ROOT).as_posix(),
