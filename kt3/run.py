@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 VISIBLE_FILE = ROOT / "eval" / "visible.jsonl"
 REFERENCE_TIME = "2026-10-01T12:00:00+03:00"
 MODES = ("baseline", "system")
+LLM_MODE = "llm_baseline"
 
 
 def input_digest(paths: list[Path]) -> str:
@@ -41,12 +42,20 @@ def quantiles(milliseconds: list[float]) -> dict:
     return {f"p{p}_ms": ordered[math.ceil(len(ordered) * p / 100) - 1] for p in (50, 95)}
 
 
-def measure(corpus: Corpus, mode: str, session: Session, question: str, reference: str, rate: float, **options) -> dict:
+def measure(corpus: Corpus, mode: str, session: Session, question: str, reference: str, rate: float,
+            *, llm_runner=None, **options) -> dict:
     cpu_start = process_time()
-    result = run_turn(corpus, mode, session, question, datetime.fromisoformat(reference), **options)
+    if mode == LLM_MODE:
+        if llm_runner is None:
+            raise ValueError("LLM runner is required for llm_baseline mode.")
+        result = llm_runner.run(session, question, datetime.fromisoformat(reference),
+                                restricted=options.get("restricted", False))
+    else:
+        result = run_turn(corpus, mode, session, question, datetime.fromisoformat(reference), **options)
     cpu_seconds = process_time() - cpu_start
     return {
-        **result, "cpu_seconds": cpu_seconds, "model_cost_usd": 0.0,
+        **result, "cpu_seconds": cpu_seconds,
+        "model_cost_usd": result.get("model_cost_usd", 0.0),
         "estimated_cpu_cost_usd": cpu_seconds * rate / 3600,
     }
 
@@ -140,13 +149,16 @@ def summarize(entries: list[dict]) -> dict:
     }
 
 
-def evaluate(corpus: Corpus, mode: str, records: list[dict], repeats: int, rate: float) -> dict:
+def evaluate(corpus: Corpus, mode: str, records: list[dict], repeats: int, rate: float, *, llm_runner=None) -> dict:
     document_keys = corpus_document_keys()
     entries = []
     for repeat in range(1, repeats + 1):
         for record in records:
             # Only user input and time cross the runtime boundary.
-            output = measure(corpus, mode, Session(), record["question"], record["reference_time"], rate)
+            output = measure(
+                corpus, mode, Session(), record["question"], record["reference_time"], rate,
+                llm_runner=llm_runner,
+            )
             step_eval = score_trace(record, translate_for_eval(record, output), document_keys)
             entries.append({
                 "id": record["id"], "repeat": repeat,
@@ -168,14 +180,28 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--cpu-hour-usd", type=float, default=0.05, help="Assumed CPU-hour cost for an estimate.")
+    parser.add_argument("--include-llm", action="store_true", help="Also run the paid OpenAI LLM baseline.")
+    parser.add_argument("--llm-limit", type=int, help="Run the LLM baseline on the first N visible examples.")
+    parser.add_argument("--llm-repeats", type=int, help="Repeat count for the LLM baseline. Defaults to --repeats.")
     args = parser.parse_args()
     if not 1 <= args.repeats <= 10 or not math.isfinite(args.cpu_hour_usd) or args.cpu_hour_usd < 0:
-        parser.error("Expected 1–10 repeats and a finite nonnegative CPU-hour rate.")
+        parser.error("Expected 1-10 repeats and a finite nonnegative CPU-hour rate.")
+    if args.llm_repeats is not None and not 1 <= args.llm_repeats <= 10:
+        parser.error("Expected 1-10 LLM repeats.")
+    if args.llm_limit is not None and not 1 <= args.llm_limit <= 45:
+        parser.error("Expected an LLM limit from 1 to 45.")
     records = [json.loads(line) for line in VISIBLE_FILE.read_text(encoding="utf-8").splitlines()]
     if len(records) != 45 or {record["split"] for record in records} != {"visible"}:
         parser.error("Expected 45 visible records.")
     case_file = HERE / "scenarios.json"
     cases = json.loads(case_file.read_text(encoding="utf-8-sig"))
+    llm_runner = None
+    if args.include_llm:
+        try:
+            from kt3.llm_baseline import LLMBaselineRunner
+            llm_runner = LLMBaselineRunner.from_environment()
+        except ValueError as error:
+            parser.error(str(error))
     clocks = (perf_counter(), process_time())
     corpus = Corpus()
     report = {
@@ -199,6 +225,22 @@ def main() -> int:
         data["scenarios"] = scenarios(corpus, mode, cases, args.cpu_hour_usd)
         data["summary"]["scenarios_passed"] = sum(case["passed"] for case in data["scenarios"])
         report["modes"][mode] = data
+    if llm_runner is not None:
+        llm_records = records[:args.llm_limit] if args.llm_limit is not None else records
+        llm_repeats = args.llm_repeats if args.llm_repeats is not None else args.repeats
+        data = evaluate(
+            corpus, LLM_MODE, llm_records, llm_repeats, args.cpu_hour_usd,
+            llm_runner=llm_runner,
+        )
+        data["summary"]["eval_records"] = len(llm_records)
+        data["summary"]["scenarios_passed"] = None
+        data["scenarios"] = []
+        report["modes"][LLM_MODE] = data
+        report["metadata"]["llm_baseline"] = {
+            **llm_runner.metadata(),
+            "eval_records": len(llm_records),
+            "repeats": llm_repeats,
+        }
     report["run_wall_ms"] = round((perf_counter() - clocks[0]) * 1000, 3)
     report["run_cpu_seconds"] = process_time() - clocks[1]
     report["run_estimated_cpu_cost_usd"] = report["run_cpu_seconds"] * args.cpu_hour_usd / 3600
